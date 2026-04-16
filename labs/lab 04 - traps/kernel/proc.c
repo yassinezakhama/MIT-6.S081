@@ -121,15 +121,19 @@ found:
     return 0;
   }
 
+  if((p->alarm = (struct alarm *)kalloc()) == 0){
+    release(&p->lock);
+    return 0;
+  }
+  p->alarm->ticks = 0;
+  p->alarm->handler = 0;
+  p->alarm->remticks = 0;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-  
-  p->alarmticks = 0;
-  p->alarmhandler = 0;
-  p->remalaramticks = 0;
 
   return p;
 }
@@ -145,6 +149,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->alarm)
+    kfree((void*)p->alarm);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -154,9 +160,6 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
-  p->alarmticks = 0;
-  p->alarmhandler = 0;
-  p->remalaramticks = 0;
 }
 
 // Create a user page table for a given process,
