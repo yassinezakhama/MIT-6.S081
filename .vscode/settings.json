@@ -44,6 +44,8 @@
     "satp",
     "sbrk",
     "sfence",
+    "sigalarm",
+    "sigreturn",
     "srcva",
     "stati",
     "sysinfo",
