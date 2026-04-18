@@ -6,6 +6,7 @@
 #include "defs.h"
 #include "fs.h"
 
+void vmprint(pagetable_t);
 /*
  * the kernel's page table.
  */
@@ -309,28 +310,22 @@ int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
-  uint64 pa, i;
-  uint flags;
-  char *mem;
+  uint64 i;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    
+    *pte &= ~PTE_W;
+    if(mappages(new, i, PGSIZE, PTE2PA(*pte), PTE_FLAGS(*pte)) != 0){
       goto err;
     }
   }
   return 0;
 
- err:
+err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
@@ -439,4 +434,31 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void vmprintlvl(pagetable_t pagetable, uint8 lvl) {
+  if (lvl > 2) {
+    return;
+  }
+  
+  for (int pteidx = 0; pteidx < 512; ++pteidx) {
+    pte_t pte = pagetable[pteidx];
+    if (pte & PTE_V) {
+      uint64 child = PTE2PA(pte);
+
+      for (int i = 0; i < lvl; ++i) {
+        printf(".. ");
+      }
+      printf("%d: pte %p pa %p\n", pteidx, pte, child);
+
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+        vmprintlvl((pagetable_t) child, lvl + 1);
+      }
+    }
+  }
+}
+
+void vmprint(pagetable_t pagetable) {
+  printf("page table %p\n", pagetable);
+  vmprintlvl(pagetable, 0);
 }
