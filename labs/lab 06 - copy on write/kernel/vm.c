@@ -310,7 +310,7 @@ int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
-  uint64 i;
+  uint64 pa, i;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -318,10 +318,15 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     
+    pa = PTE2PA(*pte);
     *pte &= ~PTE_W;
-    if(mappages(new, i, PGSIZE, PTE2PA(*pte), PTE_FLAGS(*pte)) != 0){
+    *pte |= PTE_COW;
+
+    if(mappages(new, i, PGSIZE, pa, PTE_FLAGS(*pte)) != 0){
       goto err;
     }
+
+    incref(pa);
   }
   return 0;
 
@@ -353,9 +358,18 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+
+    if (va0 > MAXVA) {
       return -1;
+    }
+    pte_t *pte = walk(pagetable, va0, 0);
+    if (pte == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0)
+      return -1;
+    if (*pte & PTE_COW && cowfault(pagetable, va0) < 0) {
+      return -1;
+    }
+
+    pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -461,4 +475,28 @@ void vmprintlvl(pagetable_t pagetable, uint8 lvl) {
 void vmprint(pagetable_t pagetable) {
   printf("page table %p\n", pagetable);
   vmprintlvl(pagetable, 0);
+}
+
+int
+cowfault(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA) {
+    return -1;
+  }
+  
+  pte_t *pte = walk(pagetable, va, 0);
+  if (pte == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_COW) == 0) {
+    return -1;
+  }
+
+  uint64 pa = PTE2PA(*pte);
+  uint64 newpa = (uint64) kalloc();
+  if (newpa == 0) {
+    return -1;
+  }
+  memmove((void *) newpa, (void *) pa, PGSIZE);
+  int flags = (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W;
+  *pte = PA2PTE(newpa) | flags;
+  kfree((void *) pa);
+  return 0;
 }
